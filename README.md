@@ -18,6 +18,9 @@
 - Interactive menu-driven interface
 - S3-compatible storage (iDrive E2, AWS S3, Wasabi, Backblaze, Cloudflare R2, MinIO, etc.)
 - Multiple retention policies (simple, time-based, count-based)
+- Snapshot management (list, browse, restore, delete)
+- Restore full backups or specific files/folders
+- Repository statistics and integrity checks
 - Optional LVM snapshot support
 - Optional Discord notifications
 - Automated cron scheduling
@@ -37,6 +40,12 @@ chmod +x dayzero-backup-manager.sh
 sudo ./dayzero-backup-manager.sh
 ```
 
+On first run, you'll be prompted to install the `dayzerobackup` command, allowing you to run it from anywhere:
+
+```bash
+sudo dayzerobackup
+```
+
 ---
 
 ## Usage
@@ -44,6 +53,8 @@ sudo ./dayzero-backup-manager.sh
 Run the script with sudo and follow the interactive prompts:
 
 ```bash
+sudo dayzerobackup
+# or if not installed:
 sudo ./dayzero-backup-manager.sh
 ```
 
@@ -64,6 +75,17 @@ The script will prompt you for:
    - Count: Keep specific daily/weekly/monthly/yearly backups
    - Unlimited: Never delete
 7. **Cron schedule** - When to run backups (standard cron syntax)
+
+### Restoring Backups
+
+Select **Manage snapshots & restore** from the main menu:
+
+- **List snapshots** - View all snapshots with dates and IDs
+- **Restore a snapshot** - Full restore to original or custom location
+- **Browse files** - List files inside a snapshot before restoring
+- **Restore specific files** - Restore individual files or folders
+- **Repository stats** - Size, snapshot count, integrity check
+- **Delete snapshot** - Remove a specific snapshot
 
 ### Configuration Files
 

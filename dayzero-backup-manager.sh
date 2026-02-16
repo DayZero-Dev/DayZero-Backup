@@ -1,4 +1,4 @@
-#!/bin/bash
+﻿#!/bin/bash
 set -euo pipefail
 
 VERSION="1.0.0"
@@ -83,6 +83,38 @@ info() {
 init_directories() {
     mkdir -p "$CONFIGS_DIR" "$ENV_DIR" "$SCRIPTS_DIR"
     chmod 700 "$ENV_DIR"
+}
+
+check_and_install_command() {
+    if ! command -v dayzerobackup &> /dev/null; then
+        local script_path="$(readlink -f "$0")"
+        
+        echo ""
+        info "First-time setup detected"
+        echo ""
+        echo -e "  ${CYAN}│${NC} Would you like to install ${WHITE}dayzerobackup${NC} command?"
+        echo -e "  ${CYAN}│${NC} ${DIM}This allows you to run: ${WHITE}dayzerobackup${NC} ${DIM}from anywhere${NC}"
+        echo ""
+        read -r -p "Install system command? (y/n): " install_cmd
+        
+        if [[ "$install_cmd" =~ ^[Yy]$ ]]; then
+            if [ -w "/usr/local/bin" ] || sudo -n true 2>/dev/null; then
+                cp "$script_path" /usr/local/bin/dayzerobackup 2>/dev/null || \
+                    sudo cp "$script_path" /usr/local/bin/dayzerobackup
+                chmod +x /usr/local/bin/dayzerobackup 2>/dev/null || \
+                    sudo chmod +x /usr/local/bin/dayzerobackup
+                
+                success "Installed! You can now run: ${WHITE}dayzerobackup${NC}"
+                echo ""
+                info "Press Enter to continue to the main menu..."
+                read -r
+            else
+                error "Unable to install (permission denied)"
+                warning "You can manually copy the script to /usr/local/bin/"
+                read -r -p "Press Enter to continue..."
+            fi
+        fi
+    fi
 }
 
 get_current_crontab() {
@@ -874,17 +906,421 @@ view_logs() {
     read -r -p "Press Enter to continue..."
 }
 
+select_backup_job() {
+    local action_label="$1"
+
+    if [ ! -d "$CONFIGS_DIR" ] || [ -z "$(ls -A "$CONFIGS_DIR" 2>/dev/null)" ]; then
+        error "No backup jobs configured yet"
+        read -r -p "Press Enter to continue..."
+        return 1
+    fi
+
+    echo -e "  ${CYAN}│${NC} Available backup jobs:"
+    echo -e "  ${CYAN}│${NC}"
+    local i=1
+    declare -g -a _job_names
+    _job_names=()
+    for config_file in "$CONFIGS_DIR"/*.conf; do
+        if [ -f "$config_file" ]; then
+            local name
+            name=$(basename "$config_file" .conf)
+            _job_names[$i]=$name
+            echo -e "  ${CYAN}│${NC}  ${WHITE}$i)${NC} $name"
+            ((i++))
+        fi
+    done
+    echo ""
+
+    echo -ne "  ${CYAN}▸${NC} ${WHITE}Select job to ${action_label}${NC} ${DIM}(0 to cancel)${NC}: "
+    read -r _job_num
+
+    if [ "$_job_num" -eq 0 ] 2>/dev/null; then
+        return 1
+    fi
+
+    if [ -z "${_job_names[$_job_num]:-}" ]; then
+        error "Invalid selection"
+        read -r -p "  Press Enter to continue..."
+        return 1
+    fi
+
+    SELECTED_JOB="${_job_names[$_job_num]}"
+    return 0
+}
+
+load_job_env() {
+    local job_name="$1"
+    source "$CONFIGS_DIR/${job_name}.conf"
+    source "$ENV_DIR/${job_name}.env"
+}
+
+manage_snapshots() {
+    while true; do
+        print_header
+        print_section "Snapshot Manager"
+
+        echo -e "  ${CYAN}┌──────────────────────────────────────────────┐${NC}"
+        echo -e "  ${CYAN}│${NC}  ${WHITE}1)${NC}  ${BLUE}List${NC} snapshots                          ${CYAN}│${NC}"
+        echo -e "  ${CYAN}│${NC}  ${WHITE}2)${NC}  ${GREEN}Restore${NC} a snapshot                      ${CYAN}│${NC}"
+        echo -e "  ${CYAN}│${NC}  ${WHITE}3)${NC}  ${YELLOW}Browse${NC} files in a snapshot              ${CYAN}│${NC}"
+        echo -e "  ${CYAN}│${NC}  ${WHITE}4)${NC}  ${MAGENTA}Repository${NC} statistics                   ${CYAN}│${NC}"
+        echo -e "  ${CYAN}│${NC}  ${WHITE}5)${NC}  ${CYAN}Restore${NC} specific files/folders          ${CYAN}│${NC}"
+        echo -e "  ${CYAN}│${NC}  ${WHITE}6)${NC}  ${RED}Delete${NC} a snapshot                       ${CYAN}│${NC}"
+        echo -e "  ${CYAN}│${NC}                                              ${CYAN}│${NC}"
+        echo -e "  ${CYAN}│${NC}  ${DIM}0)  Back to main menu${NC}                       ${CYAN}│${NC}"
+        echo -e "  ${CYAN}└──────────────────────────────────────────────┘${NC}"
+        echo ""
+
+        echo -ne "  ${CYAN}▸${NC} ${WHITE}Select option${NC}: "
+        read -r snap_choice
+
+        case $snap_choice in
+            1) list_snapshots ;;
+            2) restore_snapshot ;;
+            3) browse_snapshot ;;
+            4) repo_statistics ;;
+            5) restore_specific_files ;;
+            6) delete_snapshot ;;
+            0) return ;;
+            *)
+                error "Invalid option"
+                sleep 1
+                ;;
+        esac
+    done
+}
+
+list_snapshots() {
+    print_header
+    print_section "List Snapshots"
+
+    if ! select_backup_job "list snapshots"; then
+        return
+    fi
+
+    load_job_env "$SELECTED_JOB"
+
+    info "Fetching snapshots for ${WHITE}${SELECTED_JOB}${NC}..."
+    echo ""
+
+    if ! restic snapshots --compact 2>/dev/null; then
+        error "Failed to connect to repository"
+        echo ""
+        warning "Check your S3 credentials and endpoint"
+    fi
+
+    echo ""
+    read -r -p "Press Enter to continue..."
+}
+
+restore_snapshot() {
+    print_header
+    print_section "Restore Snapshot"
+
+    if ! select_backup_job "restore"; then
+        return
+    fi
+
+    load_job_env "$SELECTED_JOB"
+
+    info "Fetching snapshots for ${WHITE}${SELECTED_JOB}${NC}..."
+    echo ""
+
+    if ! restic snapshots --compact 2>/dev/null; then
+        error "Failed to connect to repository"
+        read -r -p "Press Enter to continue..."
+        return
+    fi
+
+    echo ""
+    echo -ne "  ${CYAN}▸${NC} ${WHITE}Enter snapshot ID to restore${NC} ${DIM}(or 'latest')${NC}: "
+    read -r snapshot_id
+
+    if [ -z "$snapshot_id" ]; then
+        warning "No snapshot selected"
+        read -r -p "Press Enter to continue..."
+        return
+    fi
+
+    prompt_with_default "Restore to directory" "$FOLDER_PATH" "RESTORE_TARGET"
+
+    echo ""
+    echo -e "  ${YELLOW}┌──────────────────────────────────────────────┐${NC}"
+    echo -e "  ${YELLOW}│${NC} ${BOLD}${WHITE}Restore Summary${NC}                              ${YELLOW}│${NC}"
+    echo -e "  ${YELLOW}│${NC}                                              ${YELLOW}│${NC}"
+    echo -e "  ${YELLOW}│${NC}  ${DIM}Job${NC}        ${WHITE}$SELECTED_JOB${NC}                          ${YELLOW}│${NC}"
+    echo -e "  ${YELLOW}│${NC}  ${DIM}Snapshot${NC}   ${WHITE}$snapshot_id${NC}                           ${YELLOW}│${NC}"
+    echo -e "  ${YELLOW}│${NC}  ${DIM}Restore to${NC} ${WHITE}$RESTORE_TARGET${NC}                        ${YELLOW}│${NC}"
+    echo -e "  ${YELLOW}│${NC}                                              ${YELLOW}│${NC}"
+    echo -e "  ${YELLOW}│${NC} ${RED}⚠ This will overwrite existing files!${NC}        ${YELLOW}│${NC}"
+    echo -e "  ${YELLOW}└──────────────────────────────────────────────┘${NC}"
+    echo ""
+
+    read -r -p "Proceed with restore? (type 'yes' to confirm): " confirm
+
+    if [ "$confirm" = "yes" ]; then
+        info "Restoring snapshot ${WHITE}${snapshot_id}${NC}..."
+        echo ""
+
+        if restic restore "$snapshot_id" --target "$RESTORE_TARGET" 2>&1; then
+            echo ""
+            success "Restore completed successfully!"
+            info "Files restored to: $RESTORE_TARGET"
+        else
+            echo ""
+            error "Restore failed! Check the error above"
+        fi
+    else
+        warning "Restore cancelled"
+    fi
+
+    echo ""
+    read -r -p "Press Enter to continue..."
+}
+
+browse_snapshot() {
+    print_header
+    print_section "Browse Snapshot Files"
+
+    if ! select_backup_job "browse"; then
+        return
+    fi
+
+    load_job_env "$SELECTED_JOB"
+
+    info "Fetching snapshots for ${WHITE}${SELECTED_JOB}${NC}..."
+    echo ""
+
+    if ! restic snapshots --compact 2>/dev/null; then
+        error "Failed to connect to repository"
+        read -r -p "Press Enter to continue..."
+        return
+    fi
+
+    echo ""
+    echo -ne "  ${CYAN}▸${NC} ${WHITE}Enter snapshot ID to browse${NC} ${DIM}(or 'latest')${NC}: "
+    read -r snapshot_id
+
+    if [ -z "$snapshot_id" ]; then
+        warning "No snapshot selected"
+        read -r -p "Press Enter to continue..."
+        return
+    fi
+
+    echo ""
+    echo -ne "  ${CYAN}▸${NC} ${WHITE}Path to list${NC} ${DIM}[/]${NC}: "
+    read -r browse_path
+    browse_path="${browse_path:-/}"
+
+    echo ""
+    info "Files in snapshot ${WHITE}${snapshot_id}${NC} at ${WHITE}${browse_path}${NC}:"
+    echo ""
+
+    if ! restic ls "$snapshot_id" "$browse_path" 2>/dev/null | head -n 100; then
+        error "Failed to list files"
+    fi
+
+    echo ""
+    info "Showing first 100 entries"
+
+    echo ""
+    read -r -p "Press Enter to continue..."
+}
+
+restore_specific_files() {
+    print_header
+    print_section "Restore Specific Files"
+
+    if ! select_backup_job "restore files from"; then
+        return
+    fi
+
+    load_job_env "$SELECTED_JOB"
+
+    info "Fetching snapshots for ${WHITE}${SELECTED_JOB}${NC}..."
+    echo ""
+
+    if ! restic snapshots --compact 2>/dev/null; then
+        error "Failed to connect to repository"
+        read -r -p "Press Enter to continue..."
+        return
+    fi
+
+    echo ""
+    echo -ne "  ${CYAN}▸${NC} ${WHITE}Enter snapshot ID${NC} ${DIM}(or 'latest')${NC}: "
+    read -r snapshot_id
+
+    if [ -z "$snapshot_id" ]; then
+        warning "No snapshot selected"
+        read -r -p "Press Enter to continue..."
+        return
+    fi
+
+    echo ""
+    echo -e "  ${CYAN}│${NC} ${DIM}Enter file/folder paths to restore (one per line)${NC}"
+    echo -e "  ${CYAN}│${NC} ${DIM}Type 'done' when finished${NC}"
+    echo ""
+
+    local -a include_paths=()
+    while true; do
+        echo -ne "  ${CYAN}▸${NC} ${WHITE}Path${NC}: "
+        read -r file_path
+        if [ "$file_path" = "done" ] || [ -z "$file_path" ]; then
+            break
+        fi
+        include_paths+=("--include" "$file_path")
+    done
+
+    if [ ${#include_paths[@]} -eq 0 ]; then
+        warning "No paths specified"
+        read -r -p "Press Enter to continue..."
+        return
+    fi
+
+    prompt_with_default "Restore to directory" "$FOLDER_PATH" "RESTORE_TARGET"
+
+    echo ""
+    info "Restoring selected files from snapshot ${WHITE}${snapshot_id}${NC}..."
+    echo ""
+
+    if restic restore "$snapshot_id" --target "$RESTORE_TARGET" "${include_paths[@]}" 2>&1; then
+        echo ""
+        success "Files restored successfully!"
+        info "Restored to: $RESTORE_TARGET"
+    else
+        echo ""
+        error "Restore failed! Check the error above"
+    fi
+
+    echo ""
+    read -r -p "Press Enter to continue..."
+}
+
+repo_statistics() {
+    print_header
+    print_section "Repository Statistics"
+
+    if ! select_backup_job "view stats for"; then
+        return
+    fi
+
+    load_job_env "$SELECTED_JOB"
+
+    info "Fetching statistics for ${WHITE}${SELECTED_JOB}${NC}..."
+    echo ""
+
+    print_section "Snapshot Count"
+    local snap_count
+    snap_count=$(restic snapshots --compact 2>/dev/null | tail -n +3 | grep -c '^' || echo "0")
+    echo -e "  ${CYAN}│${NC} Total snapshots: ${WHITE}${snap_count}${NC}"
+    echo ""
+
+    print_section "Repository Size"
+    if ! restic stats 2>/dev/null; then
+        error "Failed to get repository stats"
+    fi
+
+    echo ""
+
+    print_section "Latest Snapshot"
+    if ! restic snapshots --last 1 2>/dev/null; then
+        error "Failed to get latest snapshot"
+    fi
+
+    echo ""
+
+    print_section "Repository Integrity"
+    read -r -p "Run integrity check? This may take a while (y/n): " check_choice
+    if [[ "$check_choice" =~ ^[Yy]$ ]]; then
+        echo ""
+        info "Checking repository integrity..."
+        echo ""
+        if restic check 2>&1; then
+            echo ""
+            success "Repository integrity check passed!"
+        else
+            echo ""
+            error "Repository integrity check failed!"
+        fi
+    fi
+
+    echo ""
+    read -r -p "Press Enter to continue..."
+}
+
+delete_snapshot() {
+    print_header
+    print_section "Delete Snapshot"
+
+    if ! select_backup_job "delete snapshot from"; then
+        return
+    fi
+
+    load_job_env "$SELECTED_JOB"
+
+    info "Fetching snapshots for ${WHITE}${SELECTED_JOB}${NC}..."
+    echo ""
+
+    if ! restic snapshots --compact 2>/dev/null; then
+        error "Failed to connect to repository"
+        read -r -p "Press Enter to continue..."
+        return
+    fi
+
+    echo ""
+    echo -ne "  ${CYAN}▸${NC} ${WHITE}Enter snapshot ID to delete${NC}: "
+    read -r snapshot_id
+
+    if [ -z "$snapshot_id" ]; then
+        warning "No snapshot selected"
+        read -r -p "Press Enter to continue..."
+        return
+    fi
+
+    echo ""
+    echo -e "  ${RED}┌──────────────────────────────────────────────┐${NC}"
+    echo -e "  ${RED}│${NC} ${BOLD}${RED}WARNING${NC}                                       ${RED}│${NC}"
+    echo -e "  ${RED}│${NC}                                              ${RED}│${NC}"
+    echo -e "  ${RED}│${NC} This will permanently delete snapshot:       ${RED}│${NC}"
+    echo -e "  ${RED}│${NC}  ${WHITE}${snapshot_id}${NC}"
+    echo -e "  ${RED}│${NC}                                              ${RED}│${NC}"
+    echo -e "  ${RED}│${NC} ${YELLOW}⚠ This action cannot be undone!${NC}              ${RED}│${NC}"
+    echo -e "  ${RED}└──────────────────────────────────────────────┘${NC}"
+    echo ""
+
+    read -r -p "Type 'yes' to confirm deletion: " confirm
+
+    if [ "$confirm" = "yes" ]; then
+        info "Removing snapshot ${WHITE}${snapshot_id}${NC}..."
+        echo ""
+
+        if restic forget "$snapshot_id" --prune 2>&1; then
+            echo ""
+            success "Snapshot deleted and repository pruned"
+        else
+            echo ""
+            error "Failed to delete snapshot"
+        fi
+    else
+        warning "Deletion cancelled"
+    fi
+
+    echo ""
+    read -r -p "Press Enter to continue..."
+}
+
 main_menu() {
     while true; do
         print_header
         echo -e "  ${CYAN}┌──────────────────────────────────────────────┐${NC}"
-        echo -e "  ${CYAN}│${NC}  ${WHITE}1)${NC}  ${GREEN}➕  Add${NC} new backup job                  ${CYAN}│${NC}"
-        echo -e "  ${CYAN}│${NC}  ${WHITE}2)${NC}  ${BLUE}📋  List${NC} all backup jobs                ${CYAN}│${NC}"
-        echo -e "  ${CYAN}│${NC}  ${WHITE}3)${NC}  ${YELLOW}✏️  Edit${NC} existing backup job            ${CYAN}│${NC}"
-        echo -e "  ${CYAN}│${NC}  ${WHITE}4)${NC}  ${RED}🗑️  Delete${NC} backup job                   ${CYAN}│${NC}"
-        echo -e "  ${CYAN}│${NC}  ${WHITE}5)${NC}  ${MAGENTA}🧪  Test${NC} backup job (run manually)      ${CYAN}│${NC}"
-        echo -e "  ${CYAN}│${NC}  ${WHITE}6)${NC}  ${CYAN}📄  View${NC} backup logs                    ${CYAN}│${NC}"
-        echo -e "  ${CYAN}│${NC}  ${WHITE}7)${NC}  ${WHITE}🔍  Check${NC} restic installation           ${CYAN}│${NC}"
+        echo -e "  ${CYAN}│${NC}  ${WHITE}1)${NC}${GREEN}  Add${NC} new backup job                      ${CYAN}│${NC}"
+        echo -e "  ${CYAN}│${NC}  ${WHITE}2)${NC}${BLUE}  List${NC} all backup jobs                    ${CYAN}│${NC}"
+        echo -e "  ${CYAN}│${NC}  ${WHITE}3)${NC}${YELLOW}  Edit${NC} existing backup job                ${CYAN}│${NC}"
+        echo -e "  ${CYAN}│${NC}  ${WHITE}4)${NC}${RED}  Delete${NC} backup job                       ${CYAN}│${NC}"
+        echo -e "  ${CYAN}│${NC}  ${WHITE}5)${NC}${MAGENTA}  Test${NC} backup job (run manually)          ${CYAN}│${NC}"
+        echo -e "  ${CYAN}│${NC}  ${WHITE}6)${NC}${CYAN}  View${NC} backup logs                        ${CYAN}│${NC}"
+        echo -e "  ${CYAN}│${NC}  ${WHITE}7)${NC}${WHITE}  Manage${NC} snapshots & restore              ${CYAN}│${NC}"
+        echo -e "  ${CYAN}│${NC}  ${WHITE}8)${NC}${DIM}  Check${NC} restic installation               ${CYAN}│${NC}"
         echo -e "  ${CYAN}│${NC}                                              ${CYAN}│${NC}"
         echo -e "  ${CYAN}│${NC}  ${DIM}0)  Exit${NC}                                    ${CYAN}│${NC}"
         echo -e "  ${CYAN}└──────────────────────────────────────────────┘${NC}"
@@ -900,7 +1336,8 @@ main_menu() {
             4) delete_backup_job ;;
             5) test_backup_job ;;
             6) view_logs ;;
-            7) check_restic; read -r -p "Press Enter to continue..." ;;
+            7) manage_snapshots ;;
+            8) check_restic; read -r -p "Press Enter to continue..." ;;
             0)
                 echo ""
                 info "Goodbye!"
@@ -917,6 +1354,7 @@ main_menu() {
 main() {
     check_root
     init_directories
+    check_and_install_command
     check_restic
     main_menu
 }
