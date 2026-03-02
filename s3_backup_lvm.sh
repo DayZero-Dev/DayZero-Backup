@@ -47,7 +47,8 @@ fi
 
 log "Starting LVM snapshot backup process for $BACKUP_NAME"
 
-if ! restic snapshots &>/dev/null; then
+REPO_CHECK=$(restic snapshots 2>&1 || true)
+if echo "$REPO_CHECK" | grep -q "Is there a repository at the following location"; then
     log "Repository not found. Initializing new repository..."
     if restic init; then
         log "Repository initialized successfully."
@@ -55,6 +56,14 @@ if ! restic snapshots &>/dev/null; then
         log "Failed to initialize repository."
         exit 1
     fi
+elif echo "$REPO_CHECK" | grep -q "unable to create lock"; then
+    log "Repository is locked by another process. Skipping this backup run."
+    exit 0
+elif echo "$REPO_CHECK" | grep -q "repository is already locked"; then
+    log "Repository is locked by another process. Skipping this backup run."
+    exit 0
+elif ! echo "$REPO_CHECK" | grep -q "repository"; then
+    :
 fi
 
 log "Unlocking repository (in case of stale locks)..."
