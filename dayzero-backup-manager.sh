@@ -1,4 +1,4 @@
-#!/bin/bash
+﻿#!/bin/bash
 set -euo pipefail
 
 VERSION="1.0.0"
@@ -1309,6 +1309,141 @@ delete_snapshot() {
     read -r -p "Press Enter to continue..."
 }
 
+check_for_updates() {
+    print_header
+    print_section "Check for Updates"
+    
+    local GITHUB_RAW_URL="https://raw.githubusercontent.com/DayZero-Dev/DayZero-Backup/main/dayzero-backup-manager.sh"
+    local TEMP_FILE="/tmp/dayzero-backup-latest.sh"
+    
+    info "Current version: ${WHITE}${VERSION}${NC}"
+    info "Checking GitHub for updates..."
+    echo ""
+    
+    if ! wget -q "$GITHUB_RAW_URL" -O "$TEMP_FILE" 2>/dev/null; then
+        error "Failed to check for updates. Check your internet connection."
+        rm -f "$TEMP_FILE"
+        read -r -p "Press Enter to continue..."
+        return
+    fi
+    
+    local REMOTE_VERSION
+    REMOTE_VERSION=$(grep '^VERSION=' "$TEMP_FILE" | head -n1 | cut -d'"' -f2)
+    
+    if [ -z "$REMOTE_VERSION" ]; then
+        error "Failed to parse remote version"
+        rm -f "$TEMP_FILE"
+        read -r -p "Press Enter to continue..."
+        return
+    fi
+    
+    info "Latest version: ${WHITE}${REMOTE_VERSION}${NC}"
+    echo ""
+    
+    if [ "$VERSION" = "$REMOTE_VERSION" ]; then
+        success "You are already running the latest version!"
+        rm -f "$TEMP_FILE"
+        echo ""
+        read -r -p "Press Enter to continue..."
+        return
+    fi
+    
+    echo -e "  ${GREEN}┌──────────────────────────────────────────────┐${NC}"
+    echo -e "  ${GREEN}│${NC} ${BOLD}${WHITE}Update Available!${NC}                             ${GREEN}│${NC}"
+    echo -e "  ${GREEN}│${NC}                                              ${GREEN}│${NC}"
+    echo -e "  ${GREEN}│${NC}  ${DIM}Current${NC}  ${WHITE}${VERSION}${NC}                                    ${GREEN}│${NC}"
+    echo -e "  ${GREEN}│${NC}  ${DIM}Latest${NC}   ${WHITE}${REMOTE_VERSION}${NC}                                    ${GREEN}│${NC}"
+    echo -e "  ${GREEN}└──────────────────────────────────────────────┘${NC}"
+    echo ""
+    
+    read -r -p "Would you like to update? (y/n): " update_choice
+    if [[ ! "$update_choice" =~ ^[Yy]$ ]]; then
+        warning "Update cancelled"
+        rm -f "$TEMP_FILE"
+        read -r -p "Press Enter to continue..."
+        return
+    fi
+    
+    echo ""
+    info "Starting update process..."
+    echo ""
+    
+    local SCRIPT_PATH
+    SCRIPT_PATH="$(readlink -f "$0")"
+    
+    if [ ! -w "$SCRIPT_PATH" ]; then
+        warning "Need sudo to update script at: $SCRIPT_PATH"
+        if ! sudo -n true 2>/dev/null; then
+            echo "Please enter your password to continue..."
+        fi
+        sudo cp "$TEMP_FILE" "$SCRIPT_PATH"
+        sudo chmod +x "$SCRIPT_PATH"
+    else
+        cp "$TEMP_FILE" "$SCRIPT_PATH"
+        chmod +x "$SCRIPT_PATH"
+    fi
+    
+    success "Script updated: $SCRIPT_PATH"
+    
+    if [ -f "/usr/local/bin/dayzerobackup" ]; then
+        echo ""
+        read -r -p "Update command shortcut (/usr/local/bin/dayzerobackup)? (y/n): " update_cmd
+        if [[ "$update_cmd" =~ ^[Yy]$ ]]; then
+            if [ -w "/usr/local/bin/dayzerobackup" ]; then
+                cp "$TEMP_FILE" /usr/local/bin/dayzerobackup
+                chmod +x /usr/local/bin/dayzerobackup
+            else
+                sudo cp "$TEMP_FILE" /usr/local/bin/dayzerobackup
+                sudo chmod +x /usr/local/bin/dayzerobackup
+            fi
+            success "Command shortcut updated!"
+        fi
+    fi
+    
+    if [ -d "$SCRIPTS_DIR" ] && [ -n "$(ls -A "$SCRIPTS_DIR" 2>/dev/null)" ]; then
+        echo ""
+        read -r -p "Re-download all backup scripts to get latest fixes? (y/n): " update_scripts
+        if [[ "$update_scripts" =~ ^[Yy]$ ]]; then
+            local updated_count=0
+            for config_file in "$CONFIGS_DIR"/*.conf; do
+                if [ -f "$config_file" ]; then
+                    local job_name
+                    job_name=$(basename "$config_file" .conf)
+                    
+                    source "$config_file"
+                    source "$ENV_DIR/${job_name}.env"
+                    
+                    BACKUP_NAME="$job_name"
+                    
+                    info "Updating script for: ${WHITE}${job_name}${NC}"
+                    download_backup_script
+                    ((updated_count++))
+                fi
+            done
+            echo ""
+            success "Updated $updated_count backup script(s)"
+        fi
+    fi
+    
+    rm -f "$TEMP_FILE"
+    
+    echo ""
+    echo -e "  ${GREEN}┌──────────────────────────────────────────────┐${NC}"
+    echo -e "  ${GREEN}│${NC} ${BOLD}${WHITE}Update Complete!${NC}                              ${GREEN}│${NC}"
+    echo -e "  ${GREEN}│${NC}                                              ${GREEN}│${NC}"
+    echo -e "  ${GREEN}│${NC}  Please restart the script to use v${REMOTE_VERSION}     ${GREEN}│${NC}"
+    echo -e "  ${GREEN}└──────────────────────────────────────────────┘${NC}"
+    echo ""
+    
+    read -r -p "Restart now? (y/n): " restart_choice
+    if [[ "$restart_choice" =~ ^[Yy]$ ]]; then
+        info "Restarting..."
+        exec "$SCRIPT_PATH" "$@"
+    fi
+    
+    read -r -p "Press Enter to continue..."
+}
+
 main_menu() {
     while true; do
         print_header
@@ -1321,6 +1456,7 @@ main_menu() {
         echo -e "  ${CYAN}│${NC}  ${WHITE}6)${NC}${CYAN}  View${NC} backup logs                        ${CYAN}│${NC}"
         echo -e "  ${CYAN}│${NC}  ${WHITE}7)${NC}${WHITE}  Manage${NC} snapshots & restore              ${CYAN}│${NC}"
         echo -e "  ${CYAN}│${NC}  ${WHITE}8)${NC}${DIM}  Check${NC} restic installation               ${CYAN}│${NC}"
+        echo -e "  ${CYAN}│${NC}  ${WHITE}9)${NC}${GREEN}  Check${NC} for updates                      ${CYAN}│${NC}"
         echo -e "  ${CYAN}│${NC}                                              ${CYAN}│${NC}"
         echo -e "  ${CYAN}│${NC}  ${DIM}0)  Exit${NC}                                    ${CYAN}│${NC}"
         echo -e "  ${CYAN}└──────────────────────────────────────────────┘${NC}"
@@ -1338,6 +1474,7 @@ main_menu() {
             6) view_logs ;;
             7) manage_snapshots ;;
             8) check_restic; read -r -p "Press Enter to continue..." ;;
+            9) check_for_updates ;;
             0)
                 echo ""
                 info "Goodbye!"
