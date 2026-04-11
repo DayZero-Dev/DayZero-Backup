@@ -1456,7 +1456,7 @@ main_menu() {
         echo -e "  ${CYAN}│${NC}  ${WHITE}6)${NC}${CYAN}  View${NC} backup logs                        ${CYAN}│${NC}"
         echo -e "  ${CYAN}│${NC}  ${WHITE}7)${NC}${WHITE}  Manage${NC} snapshots & restore              ${CYAN}│${NC}"
         echo -e "  ${CYAN}│${NC}  ${WHITE}8)${NC}${DIM}  Check${NC} restic installation               ${CYAN}│${NC}"
-        echo -e "  ${CYAN}│${NC}  ${WHITE}9)${NC}${GREEN}  Check${NC} for updates                      ${CYAN}│${NC}"
+        echo -e "  ${CYAN}│${NC}  ${WHITE}9)${NC}${GREEN}  Check${NC} for updates                       ${CYAN}│${NC}"
         echo -e "  ${CYAN}│${NC}                                              ${CYAN}│${NC}"
         echo -e "  ${CYAN}│${NC}  ${DIM}0)  Exit${NC}                                    ${CYAN}│${NC}"
         echo -e "  ${CYAN}└──────────────────────────────────────────────┘${NC}"
