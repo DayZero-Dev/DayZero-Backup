@@ -1,7 +1,7 @@
 ﻿#!/bin/bash
 set -euo pipefail
 
-VERSION="1.0.0"
+VERSION="1.1.0"
 CONFIG_DIR="/etc/dayzero-backup"
 CONFIGS_DIR="$CONFIG_DIR/configs"
 ENV_DIR="$CONFIG_DIR/env"

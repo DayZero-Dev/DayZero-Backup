@@ -69,7 +69,7 @@ if [ $BACKUP_EXIT_CODE -eq 0 ]; then
         BACKUP_SIZE="N/A"
     fi
     
-    SNAPSHOT_COUNT=$(restic snapshots --json 2>/dev/null | grep -o '"short_id"' | wc -l || echo "0")
+    SNAPSHOT_COUNT=$(restic snapshots --compact 2>/dev/null | tail -n1 | awk '{print $1}' || echo "0")
     
     FILES_PROCESSED=$(echo "$BACKUP_OUTPUT" | grep "Files:" | awk '{print $2}')
     if [ -z "$FILES_PROCESSED" ]; then
@@ -113,7 +113,7 @@ fi
 
 log "Verifying repository integrity..."
 set +e
-CHECK_OUTPUT=$(restic check --read-data-subset=5% 2>&1)
+CHECK_OUTPUT=$(restic check 2>&1)
 CHECK_EXIT_CODE=$?
 set -e
 
