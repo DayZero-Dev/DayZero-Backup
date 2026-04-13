@@ -33,6 +33,9 @@ fi
 
 log "Starting backup process for $BACKUP_NAME"
 
+log "Unlocking repository (in case of stale locks)..."
+restic unlock 2>/dev/null || true
+
 REPO_CHECK=$(restic snapshots 2>&1 || true)
 if echo "$REPO_CHECK" | grep -q "Is there a repository at the following location"; then
     log "Repository not found. Initializing new repository..."
@@ -42,18 +45,7 @@ if echo "$REPO_CHECK" | grep -q "Is there a repository at the following location
         log "Failed to initialize repository."
         exit 1
     fi
-elif echo "$REPO_CHECK" | grep -q "unable to create lock"; then
-    log "Repository is locked by another process. Skipping this backup run."
-    exit 0
-elif echo "$REPO_CHECK" | grep -q "repository is already locked"; then
-    log "Repository is locked by another process. Skipping this backup run."
-    exit 0
-elif ! echo "$REPO_CHECK" | grep -q "repository"; then
-    :
 fi
-
-log "Unlocking repository (in case of stale locks)..."
-restic unlock 2>/dev/null || true
 
 log "Running restic backup..."
 set +e

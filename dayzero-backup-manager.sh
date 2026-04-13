@@ -1,7 +1,7 @@
 ﻿#!/bin/bash
 set -euo pipefail
 
-VERSION="1.1.0"
+VERSION="1.1.1"
 CONFIG_DIR="/etc/dayzero-backup"
 CONFIGS_DIR="$CONFIG_DIR/configs"
 ENV_DIR="$CONFIG_DIR/env"
@@ -1211,7 +1211,7 @@ repo_statistics() {
 
     print_section "Snapshot Count"
     local snap_count
-    snap_count=$(restic snapshots --compact 2>/dev/null | tail -n +3 | grep -c '^' || echo "0")
+    snap_count=$(restic snapshots --compact 2>/dev/null | tail -n1 | awk '{print $1}' || echo "0")
     echo -e "  ${CYAN}│${NC} Total snapshots: ${WHITE}${snap_count}${NC}"
     echo ""
 
